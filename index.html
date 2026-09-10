@@ -293,12 +293,15 @@ function renderSitesGrid(){
     card.style.position = 'relative';
     card.innerHTML =
       '<div class="site-thumb-wrap"><img src="'+site.dataURL+'">' + quadSvg(site.corners, site.w, site.h) + '</div>' +
-      '<button class="site-remove-btn" title="Remove this site photo" style="position:absolute; top:6px; right:6px; width:22px; height:22px; padding:0; line-height:1; border-radius:50%; background:rgba(10,34,65,0.65); color:#fff; border:none; font-size:14px;">\u00d7</button>' +
+      '<button class="site-remove-btn" title="Remove this site photo" style="position:absolute; top:6px; right:6px; width:24px; height:24px; padding:0; line-height:1; border-radius:50%; background:rgba(10,34,65,0.72); color:#fff; border:1px solid rgba(255,255,255,0.6); font-size:15px; font-weight:700; box-shadow:0 1px 3px rgba(0,0,0,0.3);">\u00d7</button>' +
       '<div class="site-info"><div class="site-name"><span class="dot' + (site.confirmed ? ' set' : '') + '"></span>' + site.name + '</div>' +
-      '<div class="site-status">' + (site.confirmed ? 'Placement saved' : (site.corners ? 'Needs review' : 'Not set')) + '</div></div>';
+      '<div class="site-status">' + (site.confirmed ? 'Placement saved' : (site.corners ? 'Needs review' : 'Not set')) + '</div>' +
+      '<button class="site-remove-link" style="margin-top:6px; padding:3px 8px; font-size:11px; color:var(--warn); border-color:var(--line); background:var(--panel);">Remove</button></div>';
     card.querySelector('.site-thumb-wrap').onclick = function(){ openEditor(site.id); };
-    card.querySelector('.site-info').onclick = function(){ openEditor(site.id); };
+    card.querySelector('.site-name').onclick = function(){ openEditor(site.id); };
+    card.querySelector('.site-status').onclick = function(){ openEditor(site.id); };
     card.querySelector('.site-remove-btn').onclick = function(e){ e.stopPropagation(); removeSite(site.id); };
+    card.querySelector('.site-remove-link').onclick = function(e){ e.stopPropagation(); removeSite(site.id); };
     grid.appendChild(card);
   });
 }
@@ -657,6 +660,36 @@ function renderAssignTable(){
   sites.forEach(function(site){ updateRowPreview(site); });
 }
 
+function getMipmappedCanvas(img, targetW, targetH){
+  targetW = Math.max(1, Math.round(targetW));
+  targetH = Math.max(1, Math.round(targetH));
+  var srcW = img.naturalWidth || img.width, srcH = img.naturalHeight || img.height;
+  var cur = img;
+  var curW = srcW, curH = srcH;
+  while(curW > targetW * 2 && curH > targetH * 2){
+    var nw = Math.max(targetW, Math.round(curW / 2));
+    var nh = Math.max(targetH, Math.round(curH / 2));
+    var stepCanvas = document.createElement('canvas');
+    stepCanvas.width = nw; stepCanvas.height = nh;
+    var stepCtx = stepCanvas.getContext('2d');
+    stepCtx.imageSmoothingEnabled = true;
+    stepCtx.imageSmoothingQuality = 'high';
+    stepCtx.drawImage(cur, 0, 0, nw, nh);
+    cur = stepCanvas;
+    curW = nw; curH = nh;
+  }
+  if(cur === img){
+    var finalCanvas = document.createElement('canvas');
+    finalCanvas.width = curW; finalCanvas.height = curH;
+    var fctx = finalCanvas.getContext('2d');
+    fctx.imageSmoothingEnabled = true;
+    fctx.imageSmoothingQuality = 'high';
+    fctx.drawImage(cur, 0, 0);
+    cur = finalCanvas;
+  }
+  return cur;
+}
+
 function updateRowPreview(site){
   var img = document.getElementById('previewImg-' + site.id);
   if(!img) return;
@@ -681,9 +714,14 @@ function updateRowPreview(site){
   var ctx = canvas.getContext('2d');
   ctx.drawImage(site.img, 0, 0, pw, ph);
   var scaledCorners = site.corners.map(function(p){ return [p[0]*scale, p[1]*scale]; });
+  var b = quadBounds(scaledCorners);
+  var mipped = getMipmappedCanvas(creative.img, b.maxX - b.minX, b.maxY - b.minY);
   var layer = document.createElement('canvas');
   layer.width = pw; layer.height = ph;
-  warpImageIntoQuad(layer.getContext('2d'), creative.img, scaledCorners, 10);
+  var lctx = layer.getContext('2d');
+  lctx.imageSmoothingEnabled = true;
+  lctx.imageSmoothingQuality = 'high';
+  warpImageIntoQuad(lctx, mipped, scaledCorners, 10);
   ctx.drawImage(layer, 0, 0);
   img.src = canvas.toDataURL('image/jpeg', 0.75);
 }
@@ -802,10 +840,14 @@ function generateComposite(site, creativeImg, matchLighting){
   var b = quadBounds(site.corners);
   var origLum = matchLighting ? avgLuminance(ctx, b.minX, b.minY, b.maxX, b.maxY) : null;
 
+  var mippedCreative = getMipmappedCanvas(creativeImg, b.maxX - b.minX, b.maxY - b.minY);
+
   var layer = document.createElement('canvas');
   layer.width = site.w; layer.height = site.h;
   var lctx = layer.getContext('2d');
-  warpImageIntoQuad(lctx, creativeImg, site.corners, 16);
+  lctx.imageSmoothingEnabled = true;
+  lctx.imageSmoothingQuality = 'high';
+  warpImageIntoQuad(lctx, mippedCreative, site.corners, 16);
 
   if(matchLighting){
     var newLum = avgLuminance(lctx, b.minX, b.minY, b.maxX, b.maxY);

@@ -82,8 +82,15 @@
 
   <div class="section">
     <div class="section-head"><div class="step-num">1</div><div class="step-title">Mark ad placements</div></div>
-    <div class="step-desc">Click a site photo, then drag the four corner handles onto the screen or poster. Do this once per site &mdash; it's remembered for every creative you generate afterward.</div>
+    <div class="step-desc">Click a site photo, then drag the four corner handles onto the screen or poster. Do this once per site &mdash; the placement is saved in this browser, so you won't need to set it again next time, even after closing the tab. Upload as many site photos as you need below.</div>
     <div class="sites-grid" id="sitesGrid"></div>
+
+    <div class="dropzone" id="siteDropzone" style="margin-top:14px;">
+      <div style="font-size:13px;">Click to add more site photos, or drag jpg/png files here</div>
+      <input type="file" id="sitePhotoInput" accept="image/*" multiple>
+    </div>
+    <div class="hint" id="storageHint" style="margin-top:8px;"></div>
+    <div class="hint" style="margin-top:2px;"><a href="#" id="clearAllLink" style="color:var(--text-dim); text-decoration:underline;">Clear all saved placements from this browser</a></div>
 
     <div class="editor" id="editorBox" style="display:none;">
       <div class="editor-canvas-wrap" id="editorScrollWrap">
@@ -135,16 +142,6 @@
       <input type="checkbox" id="addWatermark" checked>
       <label for="addWatermark">Stamp "creative preview" watermark on each mockup</label>
     </div>
-    <div class="toggle-row">
-      <label for="variationCount" style="min-width:220px;">Background variations per site</label>
-      <select id="variationCount" style="min-width:80px;">
-        <option value="1">1 (no variation)</option>
-        <option value="2" selected>2</option>
-        <option value="3">3</option>
-        <option value="4">4</option>
-      </select>
-      <span class="hint">Each variation reframes and re-grades the same real photo &mdash; different crop, angle and lighting &mdash; so repeat reviews don't look like the same reused image.</span>
-    </div>
     <div class="export-row">
       <button class="primary" id="generateAll">Generate all mockups</button>
     </div>
@@ -190,24 +187,93 @@ function loadImage(src){
   });
 }
 
+var STORAGE_KEY = 'inmarket_dooh_mockup_tool_v1';
+
+function loadStoredData(){
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+  } catch(e){
+    return {};
+  }
+}
+
+function persistAll(){
+  var data = { builtin: {}, custom: [] };
+  sites.forEach(function(site){
+    if(site.custom){
+      data.custom.push({ id: site.id, name: site.name, dataURL: site.dataURL, corners: site.corners, confirmed: site.confirmed });
+    } else {
+      data.builtin[site.id] = { corners: site.corners, confirmed: site.confirmed };
+    }
+  });
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    updateStorageHint(true);
+  } catch(e){
+    updateStorageHint(false);
+  }
+}
+
+function updateStorageHint(ok){
+  var el = document.getElementById('storageHint');
+  if(!el) return;
+  if(ok === false){
+    el.textContent = "Couldn't save to this browser's storage (it may be full). Placements will still work for this session, but consider removing some site photos or clearing saved data.";
+    el.style.color = 'var(--warn)';
+  } else {
+    var n = sites.length;
+    el.textContent = 'Placements are saved in this browser (' + n + ' site' + (n === 1 ? '' : 's') + ') \u2014 they\u2019ll still be here next time you open this page on this device. Not synced across devices.';
+    el.style.color = '';
+  }
+}
+
+function defaultCenteredQuad(w, h){
+  return [[w*0.3, h*0.25], [w*0.7, h*0.25], [w*0.7, h*0.65], [w*0.3, h*0.65]];
+}
+
 function init(){
+  var stored = loadStoredData();
+  var builtinOverrides = stored.builtin || {};
+
   var loaders = siteFiles.map(function(fname, idx){
+    var id = "site" + idx;
     return loadImage(IMAGES[fname]).then(function(img){
+      var override = builtinOverrides[id];
       sites.push({
-        id: "site" + idx,
+        id: id,
         name: fname.replace(/_/g,' ').replace('.jpg',''),
         dataURL: IMAGES[fname],
         img: img,
         w: img.naturalWidth,
         h: img.naturalHeight,
-        corners: defaultQuads[fname] ? defaultQuads[fname].map(function(p){return p.slice();}) : null,
-        confirmed: false
+        corners: override && override.corners ? override.corners : (defaultQuads[fname] ? defaultQuads[fname].map(function(p){return p.slice();}) : null),
+        confirmed: override ? !!override.confirmed : false,
+        custom: false
       });
     });
   });
+
+  var customList = stored.custom || [];
+  customList.forEach(function(c){
+    loaders.push(loadImage(c.dataURL).then(function(img){
+      sites.push({
+        id: c.id,
+        name: c.name,
+        dataURL: c.dataURL,
+        img: img,
+        w: img.naturalWidth,
+        h: img.naturalHeight,
+        corners: c.corners,
+        confirmed: !!c.confirmed,
+        custom: true
+      });
+    }));
+  });
+
   Promise.all(loaders).then(function(){
     renderSitesGrid();
     renderAssignTable();
+    updateStorageHint(true);
   });
 }
 
@@ -224,11 +290,15 @@ function renderSitesGrid(){
   sites.forEach(function(site){
     var card = document.createElement('div');
     card.className = 'site-card' + (site.id === activeSiteId ? ' active' : '');
+    card.style.position = 'relative';
     card.innerHTML =
       '<div class="site-thumb-wrap"><img src="'+site.dataURL+'">' + quadSvg(site.corners, site.w, site.h) + '</div>' +
+      '<button class="site-remove-btn" title="Remove this site photo" style="position:absolute; top:6px; right:6px; width:22px; height:22px; padding:0; line-height:1; border-radius:50%; background:rgba(10,34,65,0.65); color:#fff; border:none; font-size:14px;">\u00d7</button>' +
       '<div class="site-info"><div class="site-name"><span class="dot' + (site.confirmed ? ' set' : '') + '"></span>' + site.name + '</div>' +
       '<div class="site-status">' + (site.confirmed ? 'Placement saved' : (site.corners ? 'Needs review' : 'Not set')) + '</div></div>';
-    card.onclick = function(){ openEditor(site.id); };
+    card.querySelector('.site-thumb-wrap').onclick = function(){ openEditor(site.id); };
+    card.querySelector('.site-info').onclick = function(){ openEditor(site.id); };
+    card.querySelector('.site-remove-btn').onclick = function(e){ e.stopPropagation(); removeSite(site.id); };
     grid.appendChild(card);
   });
 }
@@ -243,9 +313,7 @@ function openEditor(siteId){
   var maxW = 760;
   var baseScale = Math.min(1, maxW / site.w);
 
-  var corners = site.corners ? site.corners.map(function(p){return p.slice();}) : [
-    [site.w*0.3, site.h*0.25],[site.w*0.7, site.h*0.25],[site.w*0.7, site.h*0.65],[site.w*0.3, site.h*0.65]
-  ];
+  var corners = site.corners ? site.corners.map(function(p){return p.slice();}) : defaultCenteredQuad(site.w, site.h);
 
   editorState = { site: site, baseScale: baseScale, zoom: 1, scale: baseScale, corners: corners, dragIdx: -1, cw: 0, ch: 0 };
 
@@ -403,11 +471,12 @@ document.addEventListener('DOMContentLoaded', function(){
     renderSitesGrid();
     renderAssignTable();
     updateRowPreview(st.site);
+    persistAll();
   };
   document.getElementById('resetCorners').onclick = function(){
     var st = editorState;
     var fname = siteFiles.find(function(f){ return st.site.name === f.replace(/_/g,' ').replace('.jpg',''); });
-    st.corners = defaultQuads[fname] ? defaultQuads[fname].map(function(p){return p.slice();}) : st.corners;
+    st.corners = defaultQuads[fname] ? defaultQuads[fname].map(function(p){return p.slice();}) : defaultCenteredQuad(st.site.w, st.site.h);
     renderEditor();
   };
   document.getElementById('closeEditor').onclick = function(){
@@ -428,6 +497,26 @@ document.addEventListener('DOMContentLoaded', function(){
   dz.ondrop = function(e){
     e.preventDefault(); dz.style.borderColor = '';
     handleCreativeFiles(e.dataTransfer.files);
+  };
+
+  document.getElementById('siteDropzone').onclick = function(){
+    document.getElementById('sitePhotoInput').click();
+  };
+  document.getElementById('sitePhotoInput').onchange = function(e){
+    handleSitePhotoFiles(e.target.files);
+    e.target.value = '';
+  };
+  var sdz = document.getElementById('siteDropzone');
+  sdz.ondragover = function(e){ e.preventDefault(); sdz.style.borderColor = '#7DC042'; };
+  sdz.ondragleave = function(){ sdz.style.borderColor = ''; };
+  sdz.ondrop = function(e){
+    e.preventDefault(); sdz.style.borderColor = '';
+    handleSitePhotoFiles(e.dataTransfer.files);
+  };
+
+  document.getElementById('clearAllLink').onclick = function(e){
+    e.preventDefault();
+    clearAllSavedData();
   };
 
   document.getElementById('generateAll').onclick = generateAll;
@@ -460,6 +549,69 @@ function handleCreativeFiles(fileList){
     renderCreativesRow();
     renderAssignTable();
   });
+}
+
+function downscaleImage(dataURL, img, maxDim){
+  if(img.naturalWidth <= maxDim && img.naturalHeight <= maxDim){
+    return dataURL;
+  }
+  var scale = maxDim / Math.max(img.naturalWidth, img.naturalHeight);
+  var w = Math.round(img.naturalWidth * scale), h = Math.round(img.naturalHeight * scale);
+  var canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+  return canvas.toDataURL('image/jpeg', 0.88);
+}
+
+function handleSitePhotoFiles(fileList){
+  var files = Array.from(fileList).filter(function(f){ return f.type.indexOf('image') === 0; });
+  var readers = files.map(function(f){
+    return new Promise(function(resolve){
+      var reader = new FileReader();
+      reader.onload = function(){
+        loadImage(reader.result).then(function(img){
+          var finalDataURL = downscaleImage(reader.result, img, 1400);
+          loadImage(finalDataURL).then(function(finalImg){
+            resolve({
+              id: 'custom_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+              name: f.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g,' '),
+              dataURL: finalDataURL,
+              img: finalImg,
+              w: finalImg.naturalWidth,
+              h: finalImg.naturalHeight,
+              corners: defaultCenteredQuad(finalImg.naturalWidth, finalImg.naturalHeight),
+              confirmed: false,
+              custom: true
+            });
+          });
+        });
+      };
+      reader.readAsDataURL(f);
+    });
+  });
+  Promise.all(readers).then(function(newSites){
+    sites = sites.concat(newSites);
+    renderSitesGrid();
+    renderAssignTable();
+    persistAll();
+  });
+}
+
+function removeSite(siteId){
+  if(!confirm('Remove this site photo and its saved placement?')) return;
+  sites = sites.filter(function(s){ return s.id !== siteId; });
+  delete assignments[siteId];
+  delete composites[siteId];
+  renderSitesGrid();
+  renderAssignTable();
+  renderResults();
+  persistAll();
+}
+
+function clearAllSavedData(){
+  if(!confirm('This clears all saved placements and uploaded site photos from this browser, and reloads the tool with just the original sample sites. Continue?')) return;
+  try { localStorage.removeItem(STORAGE_KEY); } catch(e){}
+  location.reload();
 }
 
 function renderCreativesRow(){
@@ -682,53 +834,6 @@ function generateComposite(site, creativeImg, matchLighting){
   return canvas;
 }
 
-function mulberry32(seed){
-  return function(){
-    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
-    var t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-function applyVariation(baseCanvas, quad, seedIndex){
-  var w = baseCanvas.width, h = baseCanvas.height;
-  var rand = mulberry32(seedIndex * 97531 + 17);
-  if(seedIndex === 0){
-    var same = document.createElement('canvas');
-    same.width = w; same.height = h;
-    same.getContext('2d').drawImage(baseCanvas, 0, 0);
-    return same;
-  }
-  var b = quadBounds(quad);
-  var zoom = 1.0 + rand() * 0.16;
-  var cropW = w / zoom, cropH = h / zoom;
-  var margin = 0.05 * Math.min(cropW, cropH);
-
-  var minCx = Math.max(0, b.maxX + margin - cropW);
-  var maxCx = Math.min(w - cropW, b.minX - margin);
-  var cx0 = (minCx <= maxCx) ? (minCx + rand() * (maxCx - minCx)) : Math.min(Math.max(0, (b.minX + b.maxX)/2 - cropW/2), Math.max(0, w - cropW));
-
-  var minCy = Math.max(0, b.maxY + margin - cropH);
-  var maxCy = Math.min(h - cropH, b.minY - margin);
-  var cy0 = (minCy <= maxCy) ? (minCy + rand() * (maxCy - minCy)) : Math.min(Math.max(0, (b.minY + b.maxY)/2 - cropH/2), Math.max(0, h - cropH));
-
-  var brightness = 0.93 + rand() * 0.14;
-  var contrast = 0.94 + rand() * 0.12;
-  var saturate = 0.86 + rand() * 0.28;
-  var hue = (rand() - 0.5) * 8;
-
-  var out = document.createElement('canvas');
-  out.width = w; out.height = h;
-  var octx = out.getContext('2d');
-  try {
-    octx.filter = 'brightness(' + brightness.toFixed(3) + ') contrast(' + contrast.toFixed(3) + ') saturate(' + saturate.toFixed(3) + ') hue-rotate(' + hue.toFixed(2) + 'deg)';
-  } catch(e){}
-  octx.drawImage(baseCanvas, cx0, cy0, cropW, cropH, 0, 0, w, h);
-  octx.filter = 'none';
-  return out;
-}
-
 function stampWatermark(canvas){
   var ctx = canvas.getContext('2d');
   var w = canvas.width, h = canvas.height;
@@ -750,24 +855,19 @@ function stampWatermark(canvas){
 function generateAll(){
   var matchLighting = document.getElementById('matchLighting').checked;
   var addWatermark = document.getElementById('addWatermark').checked;
-  var variationCount = parseInt(document.getElementById('variationCount').value, 10) || 1;
   var count = 0;
   sites.forEach(function(site){
     var crId = assignments[site.id];
     if(!crId || !site.corners) return;
     var creative = creatives.find(function(c){ return c.id === crId; });
     if(!creative) return;
-    var baseCanvas = generateComposite(site, creative.img, matchLighting);
-    var variants = [];
-    for(var i = 0; i < variationCount; i++){
-      var varied = applyVariation(baseCanvas, site.corners, i);
-      if(addWatermark) stampWatermark(varied);
-      variants.push({
-        dataURL: varied.toDataURL('image/jpeg', 0.9),
-        label: variationCount > 1 ? ('Variant ' + (i+1)) : ''
-      });
-    }
-    composites[site.id] = { siteName: site.name, creativeName: creative.name, variants: variants };
+    var canvas = generateComposite(site, creative.img, matchLighting);
+    if(addWatermark) stampWatermark(canvas);
+    composites[site.id] = {
+      siteName: site.name,
+      creativeName: creative.name,
+      dataURL: canvas.toDataURL('image/jpeg', 0.9)
+    };
     count++;
   });
   renderResults();
@@ -785,21 +885,18 @@ function renderResults(){
   section.style.display = 'block';
   keys.forEach(function(siteId){
     var r = composites[siteId];
-    r.variants.forEach(function(v, idx){
-      var card = document.createElement('div');
-      card.className = 'result-card';
-      var labelSuffix = v.label ? (' &middot; ' + v.label) : '';
-      card.innerHTML = '<img src="'+v.dataURL+'">' +
-        '<div class="result-info"><span class="result-name">'+r.siteName+' &middot; '+r.creativeName+labelSuffix+'</span>' +
-        '<button>Download</button></div>';
-      card.querySelector('button').onclick = function(){
-        var a = document.createElement('a');
-        a.href = v.dataURL;
-        a.download = r.siteName.replace(/\s+/g,'_') + (v.label ? ('_' + v.label.replace(/\s+/g,'_')) : '') + '_mockup.jpg';
-        a.click();
-      };
-      grid.appendChild(card);
-    });
+    var card = document.createElement('div');
+    card.className = 'result-card';
+    card.innerHTML = '<img src="'+r.dataURL+'">' +
+      '<div class="result-info"><span class="result-name">'+r.siteName+' &middot; '+r.creativeName+'</span>' +
+      '<button>Download</button></div>';
+    card.querySelector('button').onclick = function(){
+      var a = document.createElement('a');
+      a.href = r.dataURL;
+      a.download = r.siteName.replace(/\s+/g,'_') + '_mockup.jpg';
+      a.click();
+    };
+    grid.appendChild(card);
   });
 }
 
@@ -809,11 +906,8 @@ function downloadZip(){
   var zip = new JSZip();
   keys.forEach(function(siteId){
     var r = composites[siteId];
-    r.variants.forEach(function(v){
-      var b64 = v.dataURL.split(',')[1];
-      var suffix = v.label ? ('_' + v.label.replace(/\s+/g,'_')) : '';
-      zip.file(r.siteName.replace(/\s+/g,'_') + suffix + '_mockup.jpg', b64, {base64:true});
-    });
+    var b64 = r.dataURL.split(',')[1];
+    zip.file(r.siteName.replace(/\s+/g,'_') + '_mockup.jpg', b64, {base64:true});
   });
   zip.generateAsync({type:'blob'}).then(function(blob){
     var a = document.createElement('a');
@@ -833,18 +927,16 @@ function downloadPptx(){
     var r = composites[siteId];
     var site = sites.find(function(s){ return s.id === siteId; });
     var ar = site.w / site.h;
-    r.variants.forEach(function(v){
-      var slide = pptx.addSlide();
-      slide.background = { color: '0A2241' };
-      var maxW = 11.5, maxH = 6.2;
-      var w = maxW, h = w / ar;
-      if(h > maxH){ h = maxH; w = h * ar; }
-      var x = (13.33 - w) / 2;
-      var y = 0.55 + (maxH - h)/2;
-      slide.addImage({ data: v.dataURL, x: x, y: y, w: w, h: h });
-      var label = r.siteName + '  \u2014  ' + r.creativeName + (v.label ? ('  \u2014  ' + v.label) : '');
-      slide.addText(label, { x: 0.5, y: 0.15, w: 12.33, h: 0.4, fontSize: 14, color: '7DC042', fontFace: 'Arial', bold: true });
-    });
+    var slide = pptx.addSlide();
+    slide.background = { color: '0A2241' };
+    var maxW = 11.5, maxH = 6.2;
+    var w = maxW, h = w / ar;
+    if(h > maxH){ h = maxH; w = h * ar; }
+    var x = (13.33 - w) / 2;
+    var y = 0.55 + (maxH - h)/2;
+    slide.addImage({ data: r.dataURL, x: x, y: y, w: w, h: h });
+    var label = r.siteName + '  \u2014  ' + r.creativeName;
+    slide.addText(label, { x: 0.5, y: 0.15, w: 12.33, h: 0.4, fontSize: 14, color: '7DC042', fontFace: 'Arial', bold: true });
   });
   pptx.writeFile({ fileName: 'dooh_creative_previews.pptx' });
 }

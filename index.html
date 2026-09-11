@@ -183,33 +183,103 @@ function loadImage(src){
   });
 }
 
-var STORAGE_KEY = 'inmarket_dooh_mockup_tool_v1';
+var DB_NAME = 'inmarket_dooh_mockup_tool';
+var DB_VERSION = 1;
+var STORE_NAME = 'sites';
+var OLD_STORAGE_KEY = 'inmarket_dooh_mockup_tool_v1';
+var dbPromise = null;
 
-function loadStoredData(){
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-  } catch(e){
-    return {};
+function openDB(){
+  if(!window.indexedDB) return Promise.reject(new Error('IndexedDB not available'));
+  if(dbPromise) return dbPromise;
+  dbPromise = new Promise(function(resolve, reject){
+    var req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = function(e){
+      var db = e.target.result;
+      if(!db.objectStoreNames.contains(STORE_NAME)){
+        db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+      }
+    };
+    req.onsuccess = function(e){ resolve(e.target.result); };
+    req.onerror = function(e){ reject(e.target.error); };
+  });
+  return dbPromise;
+}
+
+function dbGetAllSites(){
+  return openDB().then(function(db){
+    return new Promise(function(resolve, reject){
+      var tx = db.transaction(STORE_NAME, 'readonly');
+      var req = tx.objectStore(STORE_NAME).getAll();
+      req.onsuccess = function(){ resolve(req.result || []); };
+      req.onerror = function(){ reject(req.error); };
+    });
+  });
+}
+
+function dbPutSite(record){
+  return openDB().then(function(db){
+    return new Promise(function(resolve, reject){
+      var tx = db.transaction(STORE_NAME, 'readwrite');
+      tx.objectStore(STORE_NAME).put(record);
+      tx.oncomplete = function(){ resolve(); };
+      tx.onerror = function(){ reject(tx.error); };
+    });
+  });
+}
+
+function dbDeleteSite(id){
+  return openDB().then(function(db){
+    return new Promise(function(resolve, reject){
+      var tx = db.transaction(STORE_NAME, 'readwrite');
+      tx.objectStore(STORE_NAME).delete(id);
+      tx.oncomplete = function(){ resolve(); };
+      tx.onerror = function(){ reject(tx.error); };
+    });
+  });
+}
+
+function dbClearAll(){
+  return openDB().then(function(db){
+    return new Promise(function(resolve, reject){
+      var tx = db.transaction(STORE_NAME, 'readwrite');
+      tx.objectStore(STORE_NAME).clear();
+      tx.oncomplete = function(){ resolve(); };
+      tx.onerror = function(){ reject(tx.error); };
+    });
+  });
+}
+
+function migrateFromLocalStorageIfNeeded(){
+  var raw;
+  try { raw = localStorage.getItem(OLD_STORAGE_KEY); } catch(e){ return Promise.resolve(); }
+  if(!raw) return Promise.resolve();
+  var old;
+  try { old = JSON.parse(raw); } catch(e){ old = null; }
+  var oldSites = (old && old.sites) || [];
+  if(oldSites.length === 0){
+    try { localStorage.removeItem(OLD_STORAGE_KEY); } catch(e){}
+    return Promise.resolve();
   }
+  return Promise.all(oldSites.map(function(s){ return dbPutSite(s); })).then(function(){
+    try { localStorage.removeItem(OLD_STORAGE_KEY); } catch(e){}
+  }).catch(function(){ /* migration best-effort only */ });
 }
 
 function persistAll(){
-  var data = { sites: sites.map(function(site){
+  var records = sites.map(function(site){
     return { id: site.id, name: site.name, dataURL: site.dataURL, corners: site.corners, confirmed: site.confirmed };
-  }) };
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    updateStorageHint(true);
-  } catch(e){
-    updateStorageHint(false);
-  }
+  });
+  Promise.all(records.map(function(r){ return dbPutSite(r); }))
+    .then(function(){ updateStorageHint(true); })
+    .catch(function(){ updateStorageHint(false); });
 }
 
 function updateStorageHint(ok){
   var el = document.getElementById('storageHint');
   if(!el) return;
   if(ok === false){
-    el.textContent = "Couldn't save to this browser's storage (it may be full). Placements will still work for this session, but consider removing some site photos or clearing saved data.";
+    el.textContent = "Couldn't save to this browser's storage. Placements will still work for this session \u2014 try removing a site photo or clearing saved data if this keeps happening.";
     el.style.color = 'var(--warn)';
   } else {
     var n = sites.length;
@@ -225,28 +295,34 @@ function defaultCenteredQuad(w, h){
 }
 
 function init(){
-  var stored = loadStoredData();
-  var storedSites = stored.sites || [];
-
-  var loaders = storedSites.map(function(s){
-    return loadImage(s.dataURL).then(function(img){
-      sites.push({
-        id: s.id,
-        name: s.name,
-        dataURL: s.dataURL,
-        img: img,
-        w: img.naturalWidth,
-        h: img.naturalHeight,
-        corners: s.corners,
-        confirmed: !!s.confirmed
+  migrateFromLocalStorageIfNeeded().then(function(){
+    return dbGetAllSites();
+  }).catch(function(){
+    return [];
+  }).then(function(storedSites){
+    var loaders = storedSites.map(function(s){
+      return loadImage(s.dataURL).then(function(img){
+        sites.push({
+          id: s.id,
+          name: s.name,
+          dataURL: s.dataURL,
+          img: img,
+          w: img.naturalWidth,
+          h: img.naturalHeight,
+          corners: s.corners,
+          confirmed: !!s.confirmed
+        });
       });
     });
-  });
-
-  Promise.all(loaders).then(function(){
+    return Promise.all(loaders);
+  }).then(function(){
     renderSitesGrid();
     renderAssignTable();
     updateStorageHint(true);
+  }).catch(function(){
+    renderSitesGrid();
+    renderAssignTable();
+    updateStorageHint(false);
   });
 }
 
@@ -612,13 +688,16 @@ function removeSite(siteId){
   renderSitesGrid();
   renderAssignTable();
   renderResults();
+  dbDeleteSite(siteId).catch(function(){});
   persistAll();
 }
 
 function clearAllSavedData(){
   if(!confirm('This permanently removes every saved placement photo and its corner data from this browser. Continue?')) return;
-  try { localStorage.removeItem(STORAGE_KEY); } catch(e){}
-  location.reload();
+  dbClearAll().catch(function(){}).then(function(){
+    try { localStorage.removeItem(OLD_STORAGE_KEY); } catch(e){}
+    location.reload();
+  });
 }
 
 function renderCreativesRow(){

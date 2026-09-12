@@ -29,6 +29,8 @@
   .site-card{background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden; cursor:pointer; transition:border-color .15s, box-shadow .15s; box-shadow:0 1px 2px rgba(10,34,65,0.05);}
   .site-card:hover{border-color:#B7C2CB; box-shadow:0 2px 8px rgba(10,34,65,0.08);}
   .site-card.active{border-color:var(--accent); box-shadow:0 0 0 2px rgba(125,192,66,0.25);}
+  .site-card.saved{border-color:var(--ok); box-shadow:0 0 0 2px rgba(95,160,42,0.30);}
+  .site-card.saved.active{border-color:var(--accent); box-shadow:0 0 0 2px rgba(125,192,66,0.35), 0 0 0 4px rgba(95,160,42,0.18);}
   .site-thumb-wrap{position:relative; width:100%; aspect-ratio:4/3; background:#E7EBEE; overflow:hidden;}
   .site-thumb-wrap img{width:100%; height:100%; object-fit:cover; display:block;}
   .site-thumb-wrap svg{position:absolute; inset:0; width:100%; height:100%;}
@@ -139,12 +141,17 @@
         <th></th>
         <th style="text-align:left; font-size:11px; color:var(--text-dim); font-weight:500; padding:6px 8px;">Creative</th>
         <th style="text-align:left; font-size:11px; color:var(--text-dim); font-weight:500; padding:6px 8px;">Live preview</th>
+        <th style="text-align:center; font-size:11px; color:var(--text-dim); font-weight:500; padding:6px 8px;">Generate?</th>
       </tr></thead>
       <tbody id="assignTable"></tbody>
     </table>
     <div class="toggle-row">
       <input type="checkbox" id="matchLighting" checked>
       <label for="matchLighting">Match ambient lighting and glare from the original photo</label>
+    </div>
+    <div class="toggle-row">
+      <input type="checkbox" id="featherEdges" checked>
+      <label for="featherEdges">Feather creative edges so they blend into the placement</label>
     </div>
     <div class="toggle-row">
       <input type="checkbox" id="addWatermark" checked>
@@ -342,7 +349,7 @@ function renderSitesGrid(){
   }
   sites.forEach(function(site){
     var card = document.createElement('div');
-    card.className = 'site-card' + (site.id === activeSiteId ? ' active' : '');
+    card.className = 'site-card' + (site.id === activeSiteId ? ' active' : '') + (site.confirmed ? ' saved' : '');
     card.style.position = 'relative';
     card.innerHTML =
       '<div class="site-thumb-wrap"><img src="'+site.dataURL+'">' + quadSvg(site.corners, site.w, site.h) + '</div>' +
@@ -715,6 +722,7 @@ function renderAssignTable(){
   var table = document.getElementById('assignTable');
   table.innerHTML = '';
   sites.forEach(function(site){
+    if(includeInGeneration[site.id] === undefined) includeInGeneration[site.id] = true;
     var tr = document.createElement('tr');
     var tdThumb = document.createElement('td');
     tdThumb.innerHTML = '<img class="assign-thumb" src="'+site.dataURL+'">';
@@ -737,7 +745,15 @@ function renderAssignTable(){
     var tdPreview = document.createElement('td');
     tdPreview.id = 'previewCell-' + site.id;
     tdPreview.innerHTML = '<img class="preview-mini" id="previewImg-' + site.id + '">';
-    tr.appendChild(tdThumb); tr.appendChild(tdName); tr.appendChild(tdSelect); tr.appendChild(tdPreview);
+    var tdInclude = document.createElement('td');
+    tdInclude.style.textAlign = 'center';
+    var chk = document.createElement('input');
+    chk.type = 'checkbox';
+    chk.checked = includeInGeneration[site.id] !== false;
+    chk.title = 'Include this placement in "Generate all mockups"';
+    chk.onchange = function(){ includeInGeneration[site.id] = chk.checked; };
+    tdInclude.appendChild(chk);
+    tr.appendChild(tdThumb); tr.appendChild(tdName); tr.appendChild(tdSelect); tr.appendChild(tdPreview); tr.appendChild(tdInclude);
     table.appendChild(tr);
   });
   sites.forEach(function(site){ updateRowPreview(site); });
@@ -788,25 +804,35 @@ function updateRowPreview(site){
     img.title = 'Set a placement above first';
     return;
   }
-  img.title = 'Live preview';
-  var previewW = 220;
-  var scale = Math.min(1, previewW / site.w);
-  var pw = Math.round(site.w * scale), ph = Math.round(site.h * scale);
-  var canvas = document.createElement('canvas');
-  canvas.width = pw; canvas.height = ph;
-  var ctx = canvas.getContext('2d');
-  ctx.drawImage(site.img, 0, 0, pw, ph);
-  var scaledCorners = site.corners.map(function(p){ return [p[0]*scale, p[1]*scale]; });
-  var b = quadBounds(scaledCorners);
-  var mipped = getMipmappedCanvas(creative.img, b.maxX - b.minX, b.maxY - b.minY);
-  var layer = document.createElement('canvas');
-  layer.width = pw; layer.height = ph;
-  var lctx = layer.getContext('2d');
-  lctx.imageSmoothingEnabled = true;
-  lctx.imageSmoothingQuality = 'high';
-  warpImageIntoQuad(lctx, mipped, scaledCorners, 10);
-  ctx.drawImage(layer, 0, 0);
-  img.src = canvas.toDataURL('image/jpeg', 0.75);
+  try {
+    img.title = 'Live preview';
+    var previewW = 220;
+    var scale = Math.min(1, previewW / site.w);
+    var pw = Math.round(site.w * scale), ph = Math.round(site.h * scale);
+    var canvas = document.createElement('canvas');
+    canvas.width = pw; canvas.height = ph;
+    var ctx = canvas.getContext('2d');
+    ctx.drawImage(site.img, 0, 0, pw, ph);
+    var scaledCorners = site.corners.map(function(p){ return [p[0]*scale, p[1]*scale]; });
+    var b = quadBounds(scaledCorners);
+    var mipped = getMipmappedCanvas(creative.img, b.maxX - b.minX, b.maxY - b.minY);
+    var layer = document.createElement('canvas');
+    layer.width = pw; layer.height = ph;
+    var lctx = layer.getContext('2d');
+    lctx.imageSmoothingEnabled = true;
+    lctx.imageSmoothingQuality = 'high';
+    warpImageIntoQuad(lctx, mipped, scaledCorners, 10);
+    var featherToggle = document.getElementById('featherEdges');
+    if(featherToggle && featherToggle.checked){
+      var fpx = Math.max(1, Math.min(8, Math.min(b.maxX-b.minX, b.maxY-b.minY) * 0.025));
+      applyFeatherMask(layer, scaledCorners, fpx);
+    }
+    ctx.drawImage(layer, 0, 0);
+    img.src = canvas.toDataURL('image/jpeg', 0.75);
+  } catch(e){
+    img.title = 'Preview failed to render: ' + e.message;
+    console.error('Live preview error for site', site.id, e);
+  }
 }
 
 function computeSquareToQuadMatrix(dst){
@@ -914,7 +940,32 @@ function avgLuminance(ctx, x0, y0, x1, y1){
   return n ? sum/n : 128;
 }
 
-function generateComposite(site, creativeImg, matchLighting){
+function applyFeatherMask(layer, corners, featherPx){
+  var w = layer.width, h = layer.height;
+  var maskRaw = document.createElement('canvas');
+  maskRaw.width = w; maskRaw.height = h;
+  var mctx = maskRaw.getContext('2d');
+  mctx.fillStyle = '#fff';
+  mctx.beginPath();
+  corners.forEach(function(p,i){ if(i===0) mctx.moveTo(p[0],p[1]); else mctx.lineTo(p[0],p[1]); });
+  mctx.closePath();
+  mctx.fill();
+
+  var maskSoft = document.createElement('canvas');
+  maskSoft.width = w; maskSoft.height = h;
+  var sctx = maskSoft.getContext('2d');
+  try { sctx.filter = 'blur(' + featherPx + 'px)'; } catch(e){}
+  sctx.drawImage(maskRaw, 0, 0);
+  sctx.filter = 'none';
+
+  var lctx = layer.getContext('2d');
+  lctx.save();
+  lctx.globalCompositeOperation = 'destination-in';
+  lctx.drawImage(maskSoft, 0, 0);
+  lctx.restore();
+}
+
+function generateComposite(site, creativeImg, matchLighting, featherEdges){
   var canvas = document.createElement('canvas');
   canvas.width = site.w; canvas.height = site.h;
   var ctx = canvas.getContext('2d');
@@ -955,6 +1006,11 @@ function generateComposite(site, creativeImg, matchLighting){
     lctx.restore();
   }
 
+  if(featherEdges){
+    var featherPx = Math.max(2, Math.min(14, Math.min(b.maxX-b.minX, b.maxY-b.minY) * 0.025));
+    applyFeatherMask(layer, site.corners, featherPx);
+  }
+
   ctx.drawImage(layer, 0, 0);
   return canvas;
 }
@@ -977,27 +1033,35 @@ function stampWatermark(canvas){
   ctx.restore();
 }
 
-function generateAll(){
+var includeInGeneration = {};
+
+function generateOne(site){
+  var crId = assignments[site.id];
+  if(!crId || !site.corners) return false;
+  var creative = creatives.find(function(c){ return c.id === crId; });
+  if(!creative) return false;
   var matchLighting = document.getElementById('matchLighting').checked;
+  var featherEdges = document.getElementById('featherEdges').checked;
   var addWatermark = document.getElementById('addWatermark').checked;
+  var canvas = generateComposite(site, creative.img, matchLighting, featherEdges);
+  if(addWatermark) stampWatermark(canvas);
+  composites[site.id] = {
+    siteName: site.name,
+    creativeName: creative.name,
+    dataURL: canvas.toDataURL('image/png')
+  };
+  return true;
+}
+
+function generateAll(){
   var count = 0;
   sites.forEach(function(site){
-    var crId = assignments[site.id];
-    if(!crId || !site.corners) return;
-    var creative = creatives.find(function(c){ return c.id === crId; });
-    if(!creative) return;
-    var canvas = generateComposite(site, creative.img, matchLighting);
-    if(addWatermark) stampWatermark(canvas);
-    composites[site.id] = {
-      siteName: site.name,
-      creativeName: creative.name,
-      dataURL: canvas.toDataURL('image/png')
-    };
-    count++;
+    if(includeInGeneration[site.id] === false) return;
+    if(generateOne(site)) count++;
   });
   renderResults();
   if(count === 0){
-    alert('Nothing to generate yet. Make sure each site has a saved placement and an assigned creative.');
+    alert('Nothing to generate yet. Make sure each selected site has a saved placement and an assigned creative.');
   }
 }
 
@@ -1014,12 +1078,21 @@ function renderResults(){
     card.className = 'result-card';
     card.innerHTML = '<img src="'+r.dataURL+'">' +
       '<div class="result-info"><span class="result-name">'+r.siteName+' &middot; '+r.creativeName+'</span>' +
-      '<button>Download</button></div>';
-    card.querySelector('button').onclick = function(){
+      '<span style="display:flex; gap:6px;"><button class="regen-btn">Regenerate</button><button class="dl-btn">Download</button></span></div>';
+    card.querySelector('.dl-btn').onclick = function(){
       var a = document.createElement('a');
       a.href = r.dataURL;
       a.download = r.siteName.replace(/\s+/g,'_') + '_mockup.png';
       a.click();
+    };
+    card.querySelector('.regen-btn').onclick = function(){
+      var site = sites.find(function(s){ return s.id === siteId; });
+      if(!site) return;
+      if(generateOne(site)){
+        renderResults();
+      } else {
+        alert('Could not regenerate \u2014 make sure this site still has a placement and an assigned creative.');
+      }
     };
     grid.appendChild(card);
   });

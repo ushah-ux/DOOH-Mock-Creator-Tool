@@ -101,7 +101,7 @@
         <canvas id="editorCanvas"></canvas>
         <canvas id="loupeCanvas" width="150" height="150" style="position:absolute; pointer-events:none; display:none; border:2px solid #7DC042; border-radius:50%; box-shadow:0 4px 14px rgba(0,0,0,0.5); background:#000;"></canvas>
       </div>
-      <div class="handle-legend">Drag the four dots (top-left, top-right, bottom-right, bottom-left) onto the corners of the ad surface. A magnified loupe appears while dragging for pixel-precise placement. You can also type exact pixel coordinates below.</div>
+      <div class="handle-legend">Drag the four dots (top-left, top-right, bottom-right, bottom-left) onto the corners of the ad surface. A magnified loupe appears while dragging for pixel-precise placement. You can also type exact pixel coordinates below. Changes apply immediately &mdash; "Save placement" marks it confirmed and keeps it saved in this browser for next time.</div>
       <div class="corner-coords" id="cornerCoords" style="display:flex; gap:14px; flex-wrap:wrap; margin-top:10px; font-size:11.5px; color:var(--text-dim);">
         <div>TL <input type="number" class="corner-input" data-corner="0" data-axis="0" style="width:58px;"> <input type="number" class="corner-input" data-corner="0" data-axis="1" style="width:58px;"></div>
         <div>TR <input type="number" class="corner-input" data-corner="1" data-axis="0" style="width:58px;"> <input type="number" class="corner-input" data-corner="1" data-axis="1" style="width:58px;"></div>
@@ -440,6 +440,7 @@ function openEditor(siteId){
     var mx = Math.max(0, Math.min(canvas.width, p[0]));
     var my = Math.max(0, Math.min(canvas.height, p[1]));
     editorState.corners[editorState.dragIdx] = [mx/editorState.scale, my/editorState.scale];
+    commitLiveCorners();
     renderEditor();
     showLoupe(e.clientX, e.clientY, mx/editorState.scale, my/editorState.scale);
   };
@@ -463,11 +464,19 @@ function openEditor(siteId){
     var mx = Math.max(0, Math.min(canvas.width, p[0]));
     var my = Math.max(0, Math.min(canvas.height, p[1]));
     editorState.corners[editorState.dragIdx] = [mx/editorState.scale, my/editorState.scale];
+    commitLiveCorners();
     renderEditor();
     showLoupe(e.touches[0].clientX, e.touches[0].clientY, mx/editorState.scale, my/editorState.scale);
     e.preventDefault();
   };
   canvas.ontouchend = function(){ editorState.dragIdx = -1; hideLoupe(); };
+}
+
+function commitLiveCorners(){
+  var st = editorState;
+  if(!st || !st.site) return;
+  st.site.corners = st.corners.map(function(p){ return p.slice(); });
+  updateRowPreview(st.site);
 }
 
 function applyZoom(zoomLevel){
@@ -551,6 +560,7 @@ document.addEventListener('DOMContentLoaded', function(){
       var maxVal = ax === 0 ? st.site.w : st.site.h;
       val = Math.max(0, Math.min(maxVal, val));
       st.corners[ci][ax] = val;
+      commitLiveCorners();
       renderEditor();
     };
   });
